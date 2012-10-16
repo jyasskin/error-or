@@ -18,20 +18,20 @@ class error_or {
   /*implicit*/ error_or(error_code ec) noexcept : ec_(ec) {}
   /*implicit*/ error_or(ValueType value) noexcept(is_nothrow_move_constructible<ValueType>())
       : ec_() {
-    new(&space_) ValueType(move(value));
+    new(&value_) ValueType(move(value));
   }
 
   error_or(const error_or& other) : ec_(other.ec_) {
     if (!ec_)
-      new(&space_) ValueType(other.value());
+      new(&value_) ValueType(other.value());
   }
   error_or(error_or&& other) : ec_(other.ec_) {
     if (!ec_)
-      new(&space_) ValueType(move(other).value());
+      new(&value_) ValueType(move(other).value());
   }
   ~error_or() {
     if (!ec_)
-      unchecked_value().~ValueType();
+      value_.~ValueType();
   }
 
   error_or& operator=(error_or other) {
@@ -45,9 +45,15 @@ class error_or {
       swap(ec_, other.ec_);
     } else if (bool(*this) && bool(other)) {
       swap(ec_, other.ec_);
-      swap(unchecked_value(), other.unchecked_value());
-    } else {
-      std::swap(*this, other);
+      swap(value_, other.value_);
+    } else if (bool(*this) && !other) {
+      swap(ec_, other.ec_);
+      new(&other.value_) ValueType(move(value_));
+      value_.~ValueType();
+    } else /* !*this && bool(other) */ {
+      swap(ec_, other.ec_);
+      new(&value_) ValueType(move(other.value_));
+      other.value_.~ValueType();
     }
   }
 
@@ -63,7 +69,7 @@ class error_or {
   const ValueType& value() const & {
     if (ec_)
       throw system_error(ec_);
-    return unchecked_value();
+    return value_;
   }
 
   // Use as "std::move(the_error_or).value()".
@@ -72,20 +78,14 @@ class error_or {
   ValueType value() && {
     if (ec_)
       throw system_error(ec_);
-    return move(unchecked_value());
+    return move(value_);
   }
 
  private:
-  ValueType& unchecked_value() {
-    return reinterpret_cast<ValueType&>(space_);
-  }
-
-  const ValueType& unchecked_value() const {
-    return reinterpret_cast<const ValueType&>(space_);
-  }
-
   error_code ec_;
-  typename aligned_storage<sizeof(ValueType), alignof(ValueType)>::type space_;
+  union {
+    ValueType value_;
+  };
 };
 
 template<typename T>
